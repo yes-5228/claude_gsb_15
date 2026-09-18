@@ -7,6 +7,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.constants import (
+    EmergencyStatus,
+    EmergencyType,
     INSPECTION_CHECK_ITEMS,
     IssueCategory,
     IssueSeverity,
@@ -16,10 +18,16 @@ from app.core.constants import (
     Shift,
 )
 from app.models import Restroom
+from app.schemas.emergency import (
+    EmergencyCreate,
+    EmergencyHandle,
+    EmergencyRecover,
+    EmergencyStatusUpdate,
+)
 from app.schemas.inspection import InspectionCreate, InspectionItem
 from app.schemas.issue import IssueCreate, IssueStatusUpdate
 from app.schemas.restroom import RestroomCreate
-from app.services import inspection_service, issue_service, restroom_service
+from app.services import emergency_service, inspection_service, issue_service, restroom_service
 
 RANDOM_SEED = 20240913
 
@@ -190,6 +198,8 @@ def seed_database(db: Session, *, reset: bool = False) -> int:
         created += 1
         _advance_issue(db, issue.id, age_days, rng)
 
+    _seed_emergencies(db, restrooms, now, rng)
+
     return created
 
 
@@ -226,3 +236,136 @@ def _advance_issue(db: Session, issue_id: int, age_days: int, rng: random.Random
             )
         except Exception:  # noqa: BLE001  演示数据允许跳过不合法的流转
             break
+
+
+# (公厕序号, 类型, 发现距今天, 响应耗时分钟, 处置总时长小时, 阶段)
+# 阶段：pending 待处置 / processing 处置中 / recovered 已恢复 / closed 已关闭
+EMERGENCY_SPECS: list[tuple[int, EmergencyType, int, int, int, str]] = [
+    (3, EmergencyType.FACILITY_BURST, 0, 0, 0, "pending"),       # 刚发现，尚未到场
+    (1, EmergencyType.POWER_CUT, 0, 1, 1, "processing"),        # 已到场，抢修中
+    (4, EmergencyType.SEWAGE_OVERFLOW, 1, 12, 2, "recovered"),  # 响应及时
+    (8, EmergencyType.WATER_CUT, 1, 20, 5, "recovered"),        # 响应及时
+    (0, EmergencyType.FACILITY_BURST, 2, 45, 4, "recovered"),   # 响应超时
+    (5, EmergencyType.POWER_CUT, 3, 50, 3, "closed"),           # 响应超时
+    (2, EmergencyType.SEWAGE_OVERFLOW, 5, 10, 3, "closed"),
+    (6, EmergencyType.WATER_CUT, 7, 25, 8, "closed"),
+    (7, EmergencyType.OTHER, 9, 18, 2, "closed"),
+    (9, EmergencyType.SEWAGE_OVERFLOW, 12, 8, 1, "closed"),
+]
+
+EMERGENCY_TEMPLATES = {
+    EmergencyType.WATER_CUT: (
+        "市政供水管网检修导致公厕停水",
+        "男、女卫生间全部供水中断，无法冲厕与洗手，影响如厕市民约 200 人次",
+        "立即启用储备水箱保障基本冲厕，张贴停水告示，安排应急送水，联系自来水公司确认恢复时间",
+        "供水恢复正常，水箱补水完毕，各洁具冲洗正常",
+        "停水 5 小时，期间启用应急供水，无市民投诉",
+    ),
+    EmergencyType.POWER_CUT: (
+        "配电线路故障导致公厕停电",
+        "照明、排风扇、感应洁具全部断电，夜间存在安全隐患",
+        "拉设临时照明并放置警示牌，电工排查线路，更换故障空气开关",
+        "线路修复，照明、通风与感应洁具供电恢复正常",
+        "停电约 1 小时，未造成人员伤亡",
+    ),
+    EmergencyType.FACILITY_BURST: (
+        "进水管道爆裂大量跑水",
+        "洗手台进水管爆裂，地面积水漫延至门口，影响相邻步道",
+        "关闭进水总阀，疏散如厕市民，清理积水，更换爆裂管件后恢复供水",
+        "管件更换完成，供水恢复，地面无积水",
+        "地面积水约 15 平方米，已拖干并放置防滑垫，无滑倒事件",
+    ),
+    EmergencyType.SEWAGE_OVERFLOW: (
+        "排污井堵塞污水外溢",
+        "污物污水从地漏外溢至男卫生间地面，异味明显，影响约 30 平方米区域",
+        "设置围挡暂停使用该区域，疏通班组高压冲洗排污管道，全面消杀除味",
+        "管道疏通完毕，污水退净，消杀除味完成，卫生间恢复开放",
+        "外溢持续约 2 小时，临时封闭 2 个蹲位，已完成 2 次消杀",
+    ),
+    EmergencyType.OTHER: (
+        "大风导致屋面排水槽脱落",
+        "排水槽一端脱落悬于门口上方，存在坠物风险，影响人员进出",
+        "现场设置警戒线，维修班组拆除松动构件并重新固定",
+        "排水槽修复牢固，门口警戒解除，通行恢复正常",
+        "封闭入口约 40 分钟，无人员受伤",
+    ),
+}
+
+
+def _seed_emergencies(db: Session, restrooms: list, now: datetime, rng: random.Random) -> None:
+    """按固定模板生成不同类型与处置阶段的应急事件。"""
+    responders = ["抢修班李建国", "水电工马晓峰", "保洁班王秀兰", "维保组陈志远", "值班长周明"]
+    discoverers = ["张伟", "刘洋", "胡明月", "邓晨曦", "马晓峰"]
+
+    for room_index, event_type, day_ago, response_minutes, duration_hours, stage in EMERGENCY_SPECS:
+        room = restrooms[room_index]
+        title, scope, measure, recover_note, impact = EMERGENCY_TEMPLATES[event_type]
+        discover_time = now - timedelta(
+            days=day_ago, hours=rng.randint(0, 6), minutes=rng.randint(0, 50)
+        )
+        if stage == "pending":
+            # 控制在刚刚发现、尚未超时的时间点
+            discover_time = now - timedelta(minutes=rng.randint(3, 10))
+
+        event = emergency_service.create_event(
+            db,
+            EmergencyCreate(
+                restroom_id=room.id,
+                event_type=event_type,
+                title=title,
+                description=f"巡检发现：{scope}。",
+                impact_scope=scope,
+                discoverer=rng.choice(discoverers),
+                discover_time=discover_time,
+                initial_remark="应急情况登记，已通知抢修力量",
+            ),
+        )
+
+        if stage == "pending":
+            continue
+
+        responder = rng.choice(responders)
+        response_time = discover_time + timedelta(minutes=response_minutes)
+        emergency_service.handle_event(
+            db,
+            event.id,
+            EmergencyHandle(
+                responder=responder,
+                measure=measure,
+                response_time=response_time,
+                remark="已到场并采取先期处置措施",
+            ),
+        )
+
+        if stage == "processing":
+            continue
+
+        recover_time = response_time + timedelta(hours=duration_hours)
+        emergency_service.recover_event(
+            db,
+            event.id,
+            EmergencyRecover(
+                recover_note=recover_note,
+                impact_detail=impact,
+                recover_time=recover_time,
+                remark="现场已恢复正常",
+            ),
+        )
+
+        if stage == "recovered":
+            continue
+
+        close_time = recover_time + timedelta(hours=rng.randint(2, 20))
+        emergency_service.change_status(
+            db,
+            event.id,
+            EmergencyStatusUpdate(
+                to_status=EmergencyStatus.CLOSED,
+                operator="值班长周明",
+                remark="确认恢复无异常，归档关闭",
+            ),
+        )
+        event = emergency_service.get_event(db, event.id)
+        event.close_time = close_time
+        event.records[-1].created_at = close_time
+        db.commit()

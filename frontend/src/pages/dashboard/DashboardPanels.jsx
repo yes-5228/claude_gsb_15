@@ -2,7 +2,13 @@ import { Link } from 'react-router-dom';
 
 import BarList from '../../components/BarList.jsx';
 import DataTable from '../../components/DataTable.jsx';
-import { ScorePill, SeverityTag, StatusTag } from '../../components/Tags.jsx';
+import {
+  EventTypeTag,
+  ResponseTag,
+  ScorePill,
+  SeverityTag,
+  StatusTag,
+} from '../../components/Tags.jsx';
 import { formatDateTime } from '../../utils/format.js';
 
 const STATUS_COLORS = {
@@ -169,6 +175,80 @@ export function RecentInspectionsPanel({ items }) {
         ]}
         rows={items || []}
         emptyText="暂无巡查记录"
+      />
+    </section>
+  );
+}
+
+const EMERGENCY_TYPE_COLORS = {
+  停水: '#2563eb',
+  停电: '#d97706',
+  设施爆裂: '#dc2626',
+  污损外溢: '#b91c1c',
+  其他: '#64748b',
+};
+
+export function EmergencyTypePanel({ items }) {
+  const rows = (items || []).filter((item) => item.value > 0);
+  return (
+    <section className="card">
+      <div className="card-title">
+        <h3>应急事件类型分布</h3>
+        <Link className="hint" to="/emergencies">
+          查看全部 →
+        </Link>
+      </div>
+      <BarList
+        items={rows.map((item) => ({
+          name: item.name,
+          value: item.value,
+          color: EMERGENCY_TYPE_COLORS[item.name] || '#0f766e',
+        }))}
+      />
+    </section>
+  );
+}
+
+export function RecentEmergenciesPanel({ items }) {
+  return (
+    <section className="card">
+      <div className="card-title">
+        <h3>最新应急事件</h3>
+        <Link className="hint" to="/emergencies">
+          查看全部 →
+        </Link>
+      </div>
+      <DataTable
+        columns={[
+          {
+            key: 'title',
+            title: '事件',
+            wrap: true,
+            render: (row) => <Link to={`/emergencies/${row.id}`}>{row.title}</Link>,
+          },
+          { key: 'restroom', title: '公厕', render: (row) => row.restroom?.name ?? '-' },
+          { key: 'event_type', title: '类型', render: (row) => <EventTypeTag type={row.event_type} /> },
+          {
+            key: 'response',
+            title: '响应',
+            render: (row) => (
+              <ResponseTag
+                responded={row.response_time != null}
+                duration={row.response_duration_minutes}
+                limit={row.response_limit_minutes}
+                overdue={row.response_overdue}
+              />
+            ),
+          },
+          { key: 'status', title: '状态', render: (row) => <StatusTag status={row.status} /> },
+          {
+            key: 'discover_time',
+            title: '发现时间',
+            render: (row) => formatDateTime(row.discover_time),
+          },
+        ]}
+        rows={items || []}
+        emptyText="暂无应急事件"
       />
     </section>
   );

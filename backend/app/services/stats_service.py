@@ -6,13 +6,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.constants import (
+    OPEN_EMERGENCY_STATUSES,
     OPEN_ISSUE_STATUSES,
+    EmergencyType,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
     RestroomStatus,
 )
-from app.models import Inspection, Issue, Restroom
+from app.models import EmergencyEvent, Inspection, Issue, Restroom
 from app.schemas.stats import (
     CategoryStat,
     DashboardStats,
@@ -22,7 +24,7 @@ from app.schemas.stats import (
     RestroomRankItem,
     TrendPoint,
 )
-from app.services import inspection_service, issue_service
+from app.services import emergency_service, inspection_service, issue_service
 
 
 def _count(db: Session, model, *conditions) -> int:
@@ -51,6 +53,15 @@ def overview(db: Session) -> OverviewStats:
     closed_count = _count(db, Issue, Issue.status == IssueStatus.CLOSED.value)
     finished = done_count + closed_count
 
+    emergency_total = _count(db, EmergencyEvent)
+    emergency_open = _count(
+        db, EmergencyEvent, EmergencyEvent.status.in_(OPEN_EMERGENCY_STATUSES)
+    )
+    emergency_rows = list(db.scalars(select(EmergencyEvent)))
+    emergency_overdue = sum(1 for event in emergency_rows if emergency_service.response_overdue(event, now=now))
+    responded = [event for event in emergency_rows if event.response_time is not None]
+    on_time = sum(1 for event in responded if not emergency_service.response_overdue(event))
+
     return OverviewStats(
         restroom_total=_count(db, Restroom),
         restroom_open=_count(db, Restroom, Restroom.status == RestroomStatus.NORMAL.value),
@@ -74,6 +85,10 @@ def overview(db: Session) -> OverviewStats:
             db, Issue, Issue.status == IssueStatus.DONE.value, Issue.updated_at >= month_start
         ),
         rectification_rate=round(finished / issue_total * 100, 1) if issue_total else 0.0,
+        emergency_total=emergency_total,
+        emergency_open=emergency_open,
+        emergency_response_overdue=emergency_overdue,
+        emergency_on_time_rate=round(on_time / len(responded) * 100, 1) if responded else 0.0,
     )
 
 
@@ -114,6 +129,18 @@ def issue_by_category(db: Session) -> list[CategoryStat]:
             )
         )
     return result
+
+
+def emergency_by_type(db: Session) -> list[NameValue]:
+    rows = dict(
+        db.execute(
+            select(EmergencyEvent.event_type, func.count()).group_by(EmergencyEvent.event_type)
+        ).all()
+    )
+    return [
+        NameValue(name=event_type.value, value=float(rows.get(event_type.value, 0)))
+        for event_type in EmergencyType
+    ]
 
 
 def inspection_trend(db: Session, days: int = 14) -> list[TrendPoint]:
@@ -232,6 +259,9 @@ def dashboard(db: Session, trend_days: int = 14) -> DashboardStats:
     recent_inspections, _ = inspection_service.list_inspections(
         db, page=1, page_size=5, sort_by="inspect_time"
     )
+    recent_emergencies, _ = emergency_service.list_events(
+        db, page=1, page_size=5, sort_by="discover_time"
+    )
     return DashboardStats(
         overview=overview(db),
         issue_by_status=issue_by_status(db),
@@ -242,4 +272,6 @@ def dashboard(db: Session, trend_days: int = 14) -> DashboardStats:
         top_restrooms=restroom_ranking(db),
         recent_issues=[issue_service.to_out(issue) for issue in recent_issues],
         recent_inspections=[inspection_service.to_out(item) for item in recent_inspections],
+        emergency_by_type=emergency_by_type(db),
+        recent_emergencies=[emergency_service.to_out(item) for item in recent_emergencies],
     )

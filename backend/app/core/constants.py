@@ -69,6 +69,54 @@ TRANSITION_ACTIONS: dict[tuple[str, str], str] = {
     (IssueStatus.DONE, IssueStatus.CLOSED): "归档关闭",
 }
 
+class EmergencyType(StrEnum):
+    WATER_CUT = "停水"
+    POWER_CUT = "停电"
+    FACILITY_BURST = "设施爆裂"
+    SEWAGE_OVERFLOW = "污损外溢"
+    OTHER = "其他"
+
+
+class EmergencyStatus(StrEnum):
+    PENDING = "待处置"
+    PROCESSING = "处置中"
+    RECOVERED = "已恢复"
+    CLOSED = "已关闭"
+
+
+# 各类应急事件的响应时限（分钟）：从发现到开始处置必须在此时限内到场
+EMERGENCY_RESPONSE_LIMITS_MINUTES: dict[str, int] = {
+    EmergencyType.WATER_CUT: 30,
+    EmergencyType.POWER_CUT: 30,
+    EmergencyType.FACILITY_BURST: 15,
+    EmergencyType.SEWAGE_OVERFLOW: 15,
+    EmergencyType.OTHER: 30,
+}
+
+# 仍处于应急处置中的状态，用于超时判定与统计
+OPEN_EMERGENCY_STATUSES: list[str] = [
+    EmergencyStatus.PENDING,
+    EmergencyStatus.PROCESSING,
+]
+
+# 应急处置流转规则：当前状态 -> 允许流转到的状态
+EMERGENCY_TRANSITIONS: dict[str, list[str]] = {
+    EmergencyStatus.PENDING: [EmergencyStatus.PROCESSING, EmergencyStatus.CLOSED],
+    EmergencyStatus.PROCESSING: [EmergencyStatus.RECOVERED, EmergencyStatus.CLOSED],
+    EmergencyStatus.RECOVERED: [EmergencyStatus.CLOSED],
+    EmergencyStatus.CLOSED: [],
+}
+
+# 状态流转对应的动作名称，用于生成处置流水
+EMERGENCY_TRANSITION_ACTIONS: dict[tuple[str, str], str] = {
+    (EmergencyStatus.PENDING, EmergencyStatus.PROCESSING): "开始处置",
+    (EmergencyStatus.PENDING, EmergencyStatus.CLOSED): "作废关闭",
+    (EmergencyStatus.PROCESSING, EmergencyStatus.RECOVERED): "恢复确认",
+    (EmergencyStatus.PROCESSING, EmergencyStatus.CLOSED): "终止关闭",
+    (EmergencyStatus.RECOVERED, EmergencyStatus.CLOSED): "归档关闭",
+}
+
+
 # 巡查检查项，每项 0-10 分
 INSPECTION_CHECK_ITEMS: list[str] = [
     "地面与台阶清洁",

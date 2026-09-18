@@ -43,6 +43,17 @@ export const STATUS_TONES = {
   已关闭: 'tag-neutral',
   正常: 'tag-success',
   发现问题: 'tag-danger',
+  待处置: 'tag-danger',
+  处置中: 'tag-warning',
+  已恢复: 'tag-success',
+};
+
+export const EVENT_TYPE_TONES = {
+  停水: 'tag-info',
+  停电: 'tag-warning',
+  设施爆裂: 'tag-danger',
+  污损外溢: 'tag-danger',
+  其他: 'tag-neutral',
 };
 
 export const SEVERITY_TONES = {
@@ -70,4 +81,18 @@ export function isOverdue(deadline, status) {
   if (!deadline) return false;
   if (['已完成', '已关闭'].includes(status)) return false;
   return new Date(deadline).getTime() < Date.now();
+}
+
+/** 把分钟数格式化为「x 天 y 小时 / x 小时 y 分钟」的可读文案。 */
+export function formatMinutes(minutes) {
+  if (minutes === null || minutes === undefined) return '-';
+  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 24 * 60) {
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`;
+  }
+  const days = Math.floor(minutes / (24 * 60));
+  const hours = Math.floor((minutes % (24 * 60)) / 60);
+  return hours ? `${days} 天 ${hours} 小时` : `${days} 天`;
 }

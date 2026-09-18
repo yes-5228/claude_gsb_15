@@ -223,3 +223,6 @@ def test_dashboard_stats(client, restroom):
     }
     assert payload["top_restrooms"]
     assert "rectification_rate" in overview
+    assert "emergency_total" in overview
+    assert "emergency_on_time_rate" in overview
+    assert {item["name"] for item in payload["emergency_by_type"]} >= {"停水", "停电", "设施爆裂", "污损外溢"}
