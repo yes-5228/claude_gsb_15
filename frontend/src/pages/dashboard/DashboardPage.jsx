@@ -9,8 +9,10 @@ import { useAsync } from '../../hooks/useAsync.js';
 import {
   CategoryPanel,
   DistrictPanel,
+  EmergencyTypePanel,
   IssueStatusPanel,
   RankingPanel,
+  RecentEmergenciesPanel,
   RecentInspectionsPanel,
   RecentIssuesPanel,
 } from './DashboardPanels.jsx';
@@ -92,6 +94,20 @@ export default function DashboardPage() {
                 tone="info"
                 foot={`本月完成 ${overview.issue_done_this_month} 条`}
               />
+              <StatCard
+                label="应急事件待处置"
+                value={overview.emergency_open}
+                unit="起"
+                tone={overview.emergency_open > 0 ? 'warning' : 'primary'}
+                foot={`累计登记 ${overview.emergency_total} 起`}
+              />
+              <StatCard
+                label="响应超时"
+                value={overview.emergency_response_overdue}
+                unit="起"
+                tone={overview.emergency_response_overdue > 0 ? 'danger' : 'primary'}
+                foot="超过约定响应时限仍未响应"
+              />
             </div>
 
             <div className="grid-2">
@@ -119,6 +135,11 @@ export default function DashboardPage() {
                   }))}
                 />
               </section>
+            </div>
+
+            <div className="grid-2">
+              <EmergencyTypePanel items={data.emergency_by_type} />
+              <RecentEmergenciesPanel items={data.recent_emergencies} />
             </div>
 
             <div className="grid-2">

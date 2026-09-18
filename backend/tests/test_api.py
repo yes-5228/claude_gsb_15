@@ -11,6 +11,10 @@ def test_health_and_dictionaries(client):
     assert "待整改" in payload["issue_status"]
     assert len(payload["inspection_check_items"]) == 8
     assert payload["issue_transitions"]["待整改"] == ["整改中", "已关闭"]
+    assert "停水停电" in payload["emergency_type"]
+    assert "待响应" in payload["emergency_status"]
+    assert payload["emergency_response_limits"]["设施爆裂"] == 20
+    assert payload["emergency_transitions"]["待响应"] == ["处置中", "已关闭"]
 
 
 def test_restroom_crud_and_delete_guard(client, restroom):
@@ -223,3 +227,140 @@ def test_dashboard_stats(client, restroom):
     }
     assert payload["top_restrooms"]
     assert "rectification_rate" in overview
+    assert "emergency_open" in overview
+    assert {item["name"] for item in payload["emergency_by_type"]} == {
+        "停水停电",
+        "设施爆裂",
+        "污损外溢",
+        "其他",
+    }
+
+
+def test_emergency_lifecycle(client, restroom):
+    discovered = datetime.now() - timedelta(minutes=45)
+    emergency = client.post(
+        "/api/v1/emergencies",
+        json={
+            "restroom_id": restroom["id"],
+            "title": "主供水管爆裂喷水",
+            "event_type": "设施爆裂",
+            "discovered_at": discovered.isoformat(),
+            "impact_scope": "男厕区域积水并漫至走道",
+            "measures": "关闭总阀并设置围挡，安排抢修",
+            "reporter": "王巡查",
+            "handler": "维修班组",
+        },
+    )
+    assert emergency.status_code == 201, emergency.text
+    emergency = emergency.json()
+    assert emergency["code"].startswith("YJ-")
+    assert emergency["status"] == "待响应"
+    # 未指定时限时按事件类型约定：设施爆裂 20 分钟
+    assert emergency["response_limit_minutes"] == 20
+    assert emergency["response_due_at"] is not None
+    assert emergency["response_minutes"] is None
+    assert emergency["response_overdue"] is True  # 发现于 45 分钟前，已超过 20 分钟时限
+    assert emergency["records"][0]["action"] == "登记事件"
+
+    # 越级流转被拒绝：待响应 -> 已恢复
+    invalid = client.post(
+        f"/api/v1/emergencies/{emergency['id']}/transitions",
+        json={"to_status": "已恢复", "operator": "维修班组", "recovery_note": "已修复"},
+    )
+    assert invalid.status_code == 400
+    assert "不允许流转" in invalid.json()["detail"]
+
+    options = client.get(f"/api/v1/emergencies/{emergency['id']}/transitions").json()
+    assert {option["status"] for option in options} == {"处置中", "已关闭"}
+
+    # 响应处置：记录响应时间并计算响应耗时
+    processing = client.post(
+        f"/api/v1/emergencies/{emergency['id']}/transitions",
+        json={"to_status": "处置中", "operator": "维修班组老张", "remark": "已到场关阀止水"},
+    ).json()
+    assert processing["status"] == "处置中"
+    assert processing["responded_at"] is not None
+    assert processing["response_minutes"] >= 45
+    assert processing["response_overdue"] is True  # 实际响应晚于约定时限
+
+    # 恢复时必须补充恢复情况
+    missing_note = client.post(
+        f"/api/v1/emergencies/{emergency['id']}/transitions",
+        json={"to_status": "已恢复", "operator": "维修班组老张"},
+    )
+    assert missing_note.status_code == 400
+    assert "恢复情况" in missing_note.json()["detail"]
+
+    recovered = client.post(
+        f"/api/v1/emergencies/{emergency['id']}/transitions",
+        json={
+            "to_status": "已恢复",
+            "operator": "维修班组老张",
+            "remark": "更换爆裂管段，恢复供水",
+            "recovery_note": "供水恢复正常，地面积水已清理",
+            "impact_note": "男厕暂停使用约 1 小时",
+        },
+    ).json()
+    assert recovered["status"] == "已恢复"
+    assert recovered["recovered_at"] is not None
+    assert recovered["handling_minutes"] >= 0
+    assert recovered["recovery_note"] == "供水恢复正常，地面积水已清理"
+    assert recovered["impact_note"] == "男厕暂停使用约 1 小时"
+
+    # 处置后仍可补充恢复情况与影响
+    supplemented = client.patch(
+        f"/api/v1/emergencies/{emergency['id']}",
+        json={"impact_note": "男厕暂停使用约 1 小时，期间引导至临厕"},
+    ).json()
+    assert supplemented["impact_note"] == "男厕暂停使用约 1 小时，期间引导至临厕"
+
+    closed = client.post(
+        f"/api/v1/emergencies/{emergency['id']}/transitions",
+        json={"to_status": "已关闭", "operator": "值班长", "remark": "归档关闭"},
+    ).json()
+    assert closed["status"] == "已关闭"
+    assert closed["closed_at"] is not None
+    assert [record["to_status"] for record in closed["records"]][-1] == "已关闭"
+
+    closed_record = client.post(
+        f"/api/v1/emergencies/{emergency['id']}/records",
+        json={"action": "处置进展", "operator": "值班长", "remark": "补充说明"},
+    )
+    assert closed_record.status_code == 400
+
+    # 超时筛选：该事件实际响应晚于时限，应被筛出
+    overdue = client.get("/api/v1/emergencies", params={"overdue": "true"}).json()
+    assert any(item["id"] == emergency["id"] for item in overdue["items"])
+    by_type = client.get("/api/v1/emergencies", params={"event_type": "设施爆裂"}).json()
+    assert any(item["id"] == emergency["id"] for item in by_type["items"])
+
+    # 公厕详情与删除保护计入应急事件
+    detail = client.get(f"/api/v1/restrooms/{restroom['id']}").json()
+    assert detail["total_emergency_count"] >= 1
+    blocked = client.delete(f"/api/v1/restrooms/{restroom['id']}")
+    assert blocked.status_code == 409
+    assert "应急事件" in blocked.json()["detail"]
+
+
+def test_emergency_custom_response_limit(client, restroom):
+    emergency = client.post(
+        "/api/v1/emergencies",
+        json={
+            "restroom_id": restroom["id"],
+            "title": "突发停电",
+            "event_type": "停水停电",
+            "response_limit_minutes": 15,
+        },
+    ).json()
+    assert emergency["response_limit_minutes"] == 15
+
+    # 修改事件类型且未显式指定时限时，按新类型重新约定
+    updated = client.patch(
+        f"/api/v1/emergencies/{emergency['id']}", json={"event_type": "污损外溢"}
+    ).json()
+    assert updated["event_type"] == "污损外溢"
+    assert updated["response_limit_minutes"] == 40
+
+    removed = client.delete(f"/api/v1/emergencies/{emergency['id']}")
+    assert removed.status_code == 200
+    assert client.get(f"/api/v1/emergencies/{emergency['id']}").status_code == 404

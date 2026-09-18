@@ -7,9 +7,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.constants import (
+    EMERGENCY_RESPONSE_LIMITS,
+    EMERGENCY_TRANSITIONS,
     INSPECTION_CHECK_ITEMS,
     INSPECTION_ITEM_MAX_SCORE,
     ISSUE_TRANSITIONS,
+    EmergencyStatus,
+    EmergencyType,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
@@ -40,6 +44,10 @@ class Dictionaries(BaseModel):
     inspection_check_items: list[str]
     inspection_item_max_score: int
     issue_transitions: dict[str, list[str]]
+    emergency_type: list[str]
+    emergency_status: list[str]
+    emergency_response_limits: dict[str, int]
+    emergency_transitions: dict[str, list[str]]
 
 
 @router.get("/dictionaries", response_model=Dictionaries, summary="枚举字典")
@@ -54,6 +62,10 @@ def get_dictionaries() -> Dictionaries:
         inspection_check_items=list(INSPECTION_CHECK_ITEMS),
         inspection_item_max_score=INSPECTION_ITEM_MAX_SCORE,
         issue_transitions={key: list(value) for key, value in ISSUE_TRANSITIONS.items()},
+        emergency_type=[item.value for item in EmergencyType],
+        emergency_status=[item.value for item in EmergencyStatus],
+        emergency_response_limits={key: value for key, value in EMERGENCY_RESPONSE_LIMITS.items()},
+        emergency_transitions={key: list(value) for key, value in EMERGENCY_TRANSITIONS.items()},
     )
 
 

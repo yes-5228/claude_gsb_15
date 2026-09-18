@@ -2,7 +2,13 @@ import { Link } from 'react-router-dom';
 
 import BarList from '../../components/BarList.jsx';
 import DataTable from '../../components/DataTable.jsx';
-import { ScorePill, SeverityTag, StatusTag } from '../../components/Tags.jsx';
+import {
+  EmergencyTypeTag,
+  ResponseTimeoutTag,
+  ScorePill,
+  SeverityTag,
+  StatusTag,
+} from '../../components/Tags.jsx';
 import { formatDateTime } from '../../utils/format.js';
 
 const STATUS_COLORS = {
@@ -11,6 +17,13 @@ const STATUS_COLORS = {
   待验收: '#2563eb',
   已完成: '#15803d',
   已关闭: '#94a3b8',
+};
+
+const EMERGENCY_TYPE_COLORS = {
+  停水停电: '#2563eb',
+  设施爆裂: '#dc2626',
+  污损外溢: '#d97706',
+  其他: '#64748b',
 };
 
 export function IssueStatusPanel({ items }) {
@@ -169,6 +182,74 @@ export function RecentInspectionsPanel({ items }) {
         ]}
         rows={items || []}
         emptyText="暂无巡查记录"
+      />
+    </section>
+  );
+}
+
+export function EmergencyTypePanel({ items }) {
+  const rows = (items || []).filter((item) => item.value > 0);
+  if (!rows.length) return null;
+  return (
+    <section className="card">
+      <div className="card-title">
+        <h3>应急事件类型分布</h3>
+        <Link className="hint" to="/emergencies">
+          查看全部 →
+        </Link>
+      </div>
+      <BarList
+        items={rows.map((item) => ({
+          name: item.name,
+          value: item.value,
+          color: EMERGENCY_TYPE_COLORS[item.name] || '#0f766e',
+        }))}
+      />
+    </section>
+  );
+}
+
+export function RecentEmergenciesPanel({ items }) {
+  return (
+    <section className="card">
+      <div className="card-title">
+        <h3>最新应急事件</h3>
+        <Link className="hint" to="/emergencies">
+          查看全部 →
+        </Link>
+      </div>
+      <DataTable
+        columns={[
+          {
+            key: 'title',
+            title: '事件',
+            wrap: true,
+            render: (row) => <Link to={`/emergencies/${row.id}`}>{row.title}</Link>,
+          },
+          { key: 'restroom', title: '公厕', render: (row) => row.restroom?.name ?? '-' },
+          {
+            key: 'event_type',
+            title: '类型',
+            render: (row) => <EmergencyTypeTag eventType={row.event_type} />,
+          },
+          {
+            key: 'status',
+            title: '状态',
+            render: (row) => (
+              <span className="inline">
+                <StatusTag status={row.status} />
+                <ResponseTimeoutTag overdue={row.response_overdue} />
+              </span>
+            ),
+          },
+          {
+            key: 'discovered_at',
+            title: '发现时间',
+            render: (row) => formatDateTime(row.discovered_at),
+          },
+        ]}
+        rows={items || []}
+        emptyText="暂无应急事件"
       />
     </section>
   );

@@ -97,3 +97,51 @@ OPEN_ISSUE_STATUSES: list[str] = [
 
 # 单检查项低于该分数视为不合格项
 INSPECTION_ITEM_PROBLEM_THRESHOLD = 6
+
+
+class EmergencyType(StrEnum):
+    """应急事件类型。"""
+
+    WATER_POWER_OUTAGE = "停水停电"
+    FACILITY_BURST = "设施爆裂"
+    CONTAMINATION_OVERFLOW = "污损外溢"
+    OTHER = "其他"
+
+
+class EmergencyStatus(StrEnum):
+    PENDING = "待响应"
+    PROCESSING = "处置中"
+    RECOVERED = "已恢复"
+    CLOSED = "已关闭"
+
+
+# 按事件类型约定的响应时限（分钟），登记时可按需覆盖
+EMERGENCY_RESPONSE_LIMITS: dict[str, int] = {
+    EmergencyType.WATER_POWER_OUTAGE: 30,
+    EmergencyType.FACILITY_BURST: 20,
+    EmergencyType.CONTAMINATION_OVERFLOW: 40,
+    EmergencyType.OTHER: 60,
+}
+
+# 应急处置流转规则：当前状态 -> 允许流转到的状态
+EMERGENCY_TRANSITIONS: dict[str, list[str]] = {
+    EmergencyStatus.PENDING: [EmergencyStatus.PROCESSING, EmergencyStatus.CLOSED],
+    EmergencyStatus.PROCESSING: [EmergencyStatus.RECOVERED, EmergencyStatus.CLOSED],
+    EmergencyStatus.RECOVERED: [EmergencyStatus.CLOSED],
+    EmergencyStatus.CLOSED: [],
+}
+
+# 状态流转对应的动作名称，用于生成处置流水
+EMERGENCY_TRANSITION_ACTIONS: dict[tuple[str, str], str] = {
+    (EmergencyStatus.PENDING, EmergencyStatus.PROCESSING): "响应处置",
+    (EmergencyStatus.PENDING, EmergencyStatus.CLOSED): "作废关闭",
+    (EmergencyStatus.PROCESSING, EmergencyStatus.RECOVERED): "处置恢复",
+    (EmergencyStatus.PROCESSING, EmergencyStatus.CLOSED): "终止关闭",
+    (EmergencyStatus.RECOVERED, EmergencyStatus.CLOSED): "归档关闭",
+}
+
+# 仍未处置完毕的状态，用于统计待处置应急事件
+OPEN_EMERGENCY_STATUSES: list[str] = [
+    EmergencyStatus.PENDING,
+    EmergencyStatus.PROCESSING,
+]

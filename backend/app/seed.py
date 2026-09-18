@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.core.constants import (
     INSPECTION_CHECK_ITEMS,
+    EmergencyStatus,
+    EmergencyType,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
@@ -16,10 +18,11 @@ from app.core.constants import (
     Shift,
 )
 from app.models import Restroom
+from app.schemas.emergency import EmergencyCreate, EmergencyStatusUpdate
 from app.schemas.inspection import InspectionCreate, InspectionItem
 from app.schemas.issue import IssueCreate, IssueStatusUpdate
 from app.schemas.restroom import RestroomCreate
-from app.services import inspection_service, issue_service, restroom_service
+from app.services import emergency_service, inspection_service, issue_service, restroom_service
 
 RANDOM_SEED = 20240913
 
@@ -78,6 +81,46 @@ CATEGORY_BY_ITEM = {
     "工具与标识摆放": IssueCategory.OTHER,
     "墙面门窗卫生": IssueCategory.CLEANING,
 }
+
+# 应急事件模板：事件类型、标题、影响范围、处置措施
+EMERGENCY_TEMPLATES = [
+    (
+        EmergencyType.WATER_POWER_OUTAGE,
+        "突发停水，冲洗系统无法使用",
+        "全厕停水，蹲位冲洗与洗手台均不可用",
+        "联系供水部门排查停水原因，启用临时储水应急冲洗，张贴温馨提示",
+    ),
+    (
+        EmergencyType.FACILITY_BURST,
+        "主供水管爆裂喷水",
+        "男厕区域积水并漫至走道，如厕通行受阻",
+        "关闭供水总阀，设置围挡与警示牌，抢修更换爆裂管段后恢复供水",
+    ),
+    (
+        EmergencyType.CONTAMINATION_OVERFLOW,
+        "化粪池满溢污水外溢",
+        "厕外检查井周边约 5 平方米污损外溢，异味明显",
+        "联系吸污车紧急清掏，外溢区域冲洗消毒并撒布除臭剂",
+    ),
+    (
+        EmergencyType.WATER_POWER_OUTAGE,
+        "夜间照明线路断电",
+        "厕内照明全部熄灭，夜间如厕存在安全隐患",
+        "检查配电箱并联系供电抢修，处置期间放置应急照明灯",
+    ),
+    (
+        EmergencyType.FACILITY_BURST,
+        "蹲位冲水阀爆裂喷溅",
+        "单个蹲位喷溅无法使用，周边地面积水",
+        "关闭该蹲位角阀并暂停使用，更换冲水阀，清理地面积水",
+    ),
+    (
+        EmergencyType.CONTAMINATION_OVERFLOW,
+        "排污管堵塞污水返溢",
+        "女厕地面污水返溢约 10 平方米",
+        "疏通排污管道，地面清洗消毒，处置期间放置警示牌并引导至临厕",
+    ),
+]
 
 
 def _build_items(rng: random.Random, quality: float) -> list[InspectionItem]:
@@ -190,6 +233,8 @@ def seed_database(db: Session, *, reset: bool = False) -> int:
         created += 1
         _advance_issue(db, issue.id, age_days, rng)
 
+    _seed_emergencies(db, restrooms, rng, now)
+
     return created
 
 
@@ -226,3 +271,72 @@ def _advance_issue(db: Session, issue_id: int, age_days: int, rng: random.Random
             )
         except Exception:  # noqa: BLE001  演示数据允许跳过不合法的流转
             break
+
+
+def _seed_emergencies(db: Session, restrooms: list, rng: random.Random, now: datetime) -> None:
+    """写入应急事件演示数据：覆盖各事件类型与不同处置阶段。"""
+    candidates = [room for room in restrooms if room.status != RestroomStatus.CLOSED.value]
+    for index, (event_type, title, scope, measures) in enumerate(EMERGENCY_TEMPLATES):
+        room = candidates[index % len(candidates)]
+        discovered = now - timedelta(
+            days=index, hours=rng.randint(1, 9), minutes=rng.randint(0, 59)
+        )
+        emergency = emergency_service.create_emergency(
+            db,
+            EmergencyCreate(
+                restroom_id=room.id,
+                title=title,
+                event_type=event_type,
+                discovered_at=discovered,
+                impact_scope=scope,
+                measures=measures,
+                reporter=rng.choice(INSPECTORS),
+                handler=rng.choice(MANAGERS),
+                initial_remark="巡查中发现突发情况，立即登记并上报",
+            ),
+        )
+        # 第一条保持待响应且已逾响应时限，用于演示超时预警
+        if index > 0:
+            _advance_emergency(db, emergency.id, discovered, rng)
+
+
+def _advance_emergency(db: Session, emergency_id: int, discovered: datetime, rng: random.Random) -> None:
+    """按处置流程推进演示事件，并回写与时间线一致的响应/恢复时间。"""
+    roll = rng.random()
+    if roll < 0.25:
+        return  # 保持待响应
+    emergency_service.change_status(
+        db,
+        emergency_id,
+        EmergencyStatusUpdate(
+            to_status=EmergencyStatus.PROCESSING, operator="维修班组", remark="已到场开始处置"
+        ),
+    )
+    emergency = emergency_service.get_emergency(db, emergency_id)
+    emergency.responded_at = discovered + timedelta(
+        minutes=rng.randint(10, emergency.response_limit_minutes + 30)
+    )
+    db.commit()
+    if roll < 0.55:
+        return  # 处置中
+    emergency_service.change_status(
+        db,
+        emergency_id,
+        EmergencyStatusUpdate(
+            to_status=EmergencyStatus.RECOVERED,
+            operator="维修班组",
+            remark="现场处置完毕，设施恢复运行",
+            recovery_note="设施已恢复正常，现场清理消毒完毕",
+            impact_note="部分区域暂停使用约 2 小时，未收到群众投诉",
+        ),
+    )
+    emergency = emergency_service.get_emergency(db, emergency_id)
+    emergency.recovered_at = emergency.responded_at + timedelta(minutes=rng.randint(30, 240))
+    db.commit()
+    if roll < 0.8:
+        return  # 已恢复待归档
+    emergency_service.change_status(
+        db,
+        emergency_id,
+        EmergencyStatusUpdate(to_status=EmergencyStatus.CLOSED, operator="值班长", remark="归档关闭"),
+    )

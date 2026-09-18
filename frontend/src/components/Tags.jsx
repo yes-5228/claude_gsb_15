@@ -1,4 +1,4 @@
-import { isOverdue, scoreTone, severityTone, statusTone } from '../utils/format.js';
+import { emergencyTypeTone, isOverdue, scoreTone, severityTone, statusTone } from '../utils/format.js';
 
 export function StatusTag({ status }) {
   return <span className={`tag ${statusTone(status)}`}>{status}</span>;
@@ -15,6 +15,15 @@ export function ScorePill({ score }) {
 export function OverdueTag({ deadline, status }) {
   if (!isOverdue(deadline, status)) return null;
   return <span className="tag tag-danger">已超期</span>;
+}
+
+export function EmergencyTypeTag({ eventType }) {
+  return <span className={`tag ${emergencyTypeTone(eventType)}`}>{eventType}</span>;
+}
+
+export function ResponseTimeoutTag({ overdue }) {
+  if (!overdue) return null;
+  return <span className="tag tag-danger">响应超时</span>;
 }
 
 export function GradeTag({ grade }) {

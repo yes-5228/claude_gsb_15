@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { emergencyApi } from '../../api/emergencies.js';
 import { inspectionApi } from '../../api/inspections.js';
 import { issueApi } from '../../api/issues.js';
 import { restroomApi } from '../../api/restrooms.js';
@@ -8,7 +9,13 @@ import DataTable from '../../components/DataTable.jsx';
 import DetailList from '../../components/DetailList.jsx';
 import PageHeader from '../../components/PageHeader.jsx';
 import Pagination from '../../components/Pagination.jsx';
-import { ScorePill, SeverityTag, StatusTag } from '../../components/Tags.jsx';
+import {
+  EmergencyTypeTag,
+  ResponseTimeoutTag,
+  ScorePill,
+  SeverityTag,
+  StatusTag,
+} from '../../components/Tags.jsx';
 import { useAsync } from '../../hooks/useAsync.js';
 import { useListQuery } from '../../hooks/useListQuery.js';
 import { formatDateTime } from '../../utils/format.js';
@@ -18,6 +25,7 @@ const TABS = [
   { key: 'profile', label: '基础档案' },
   { key: 'inspections', label: '巡查记录' },
   { key: 'issues', label: '问题记录' },
+  { key: 'emergencies', label: '应急事件' },
 ];
 
 export default function RestroomDetailPage() {
@@ -36,6 +44,11 @@ export default function RestroomDetailPage() {
   );
   const issues = useListQuery(
     (params) => issueApi.list({ ...params, restroom_id: restroomId }),
+    {},
+    5,
+  );
+  const emergencies = useListQuery(
+    (params) => emergencyApi.list({ ...params, restroom_id: restroomId }),
     {},
     5,
   );
@@ -90,6 +103,14 @@ export default function RestroomDetailPage() {
                   <span className="unit">条</span>
                 </div>
                 <div className="foot">累计上报 {restroom.total_issue_count} 条</div>
+              </div>
+              <div className={`stat-card${restroom.open_emergency_count ? ' is-warning' : ''}`}>
+                <div className="label">待处置应急事件</div>
+                <div className="value">
+                  {restroom.open_emergency_count}
+                  <span className="unit">起</span>
+                </div>
+                <div className="foot">累计登记 {restroom.total_emergency_count} 起</div>
               </div>
             </div>
 
@@ -186,6 +207,53 @@ export default function RestroomDetailPage() {
                   ]}
                 />
                 <Pagination meta={issues.meta} onPageChange={issues.setPage} />
+              </section>
+            ) : null}
+
+            {tab === 'emergencies' ? (
+              <section className="card">
+                <div className="card-title">
+                  <h3>应急事件</h3>
+                  <Link className="hint" to="/emergencies">
+                    前往应急模块 →
+                  </Link>
+                </div>
+                <DataTable
+                  loading={emergencies.loading}
+                  error={emergencies.error}
+                  rows={emergencies.items}
+                  emptyText="该公厕暂无应急事件记录"
+                  columns={[
+                    { key: 'code', title: '编号' },
+                    {
+                      key: 'title',
+                      title: '事件',
+                      wrap: true,
+                      render: (row) => <Link to={`/emergencies/${row.id}`}>{row.title}</Link>,
+                    },
+                    {
+                      key: 'event_type',
+                      title: '类型',
+                      render: (row) => <EmergencyTypeTag eventType={row.event_type} />,
+                    },
+                    {
+                      key: 'status',
+                      title: '状态',
+                      render: (row) => (
+                        <span className="inline">
+                          <StatusTag status={row.status} />
+                          <ResponseTimeoutTag overdue={row.response_overdue} />
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'discovered_at',
+                      title: '发现时间',
+                      render: (row) => formatDateTime(row.discovered_at),
+                    },
+                  ]}
+                />
+                <Pagination meta={emergencies.meta} onPageChange={emergencies.setPage} />
               </section>
             ) : null}
           </>

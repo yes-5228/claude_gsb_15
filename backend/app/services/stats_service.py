@@ -6,13 +6,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.constants import (
+    OPEN_EMERGENCY_STATUSES,
     OPEN_ISSUE_STATUSES,
+    EmergencyType,
     IssueCategory,
     IssueSeverity,
     IssueStatus,
     RestroomStatus,
 )
-from app.models import Inspection, Issue, Restroom
+from app.models import Emergency, Inspection, Issue, Restroom
 from app.schemas.stats import (
     CategoryStat,
     DashboardStats,
@@ -22,7 +24,7 @@ from app.schemas.stats import (
     RestroomRankItem,
     TrendPoint,
 )
-from app.services import inspection_service, issue_service
+from app.services import emergency_service, inspection_service, issue_service
 
 
 def _count(db: Session, model, *conditions) -> int:
@@ -74,6 +76,16 @@ def overview(db: Session) -> OverviewStats:
             db, Issue, Issue.status == IssueStatus.DONE.value, Issue.updated_at >= month_start
         ),
         rectification_rate=round(finished / issue_total * 100, 1) if issue_total else 0.0,
+        emergency_total=_count(db, Emergency),
+        emergency_open=_count(db, Emergency, Emergency.status.in_(OPEN_EMERGENCY_STATUSES)),
+        emergency_response_overdue=_count(
+            db,
+            Emergency,
+            Emergency.responded_at.is_(None),
+            Emergency.status.in_(OPEN_EMERGENCY_STATUSES),
+            Emergency.response_due_at.is_not(None),
+            Emergency.response_due_at < now,
+        ),
     )
 
 
@@ -90,6 +102,16 @@ def issue_by_severity(db: Session) -> list[NameValue]:
     return [
         NameValue(name=severity.value, value=float(rows.get(severity.value, 0)))
         for severity in IssueSeverity
+    ]
+
+
+def emergency_by_type(db: Session) -> list[NameValue]:
+    rows = dict(
+        db.execute(select(Emergency.event_type, func.count()).group_by(Emergency.event_type)).all()
+    )
+    return [
+        NameValue(name=event_type.value, value=float(rows.get(event_type.value, 0)))
+        for event_type in EmergencyType
     ]
 
 
@@ -232,14 +254,19 @@ def dashboard(db: Session, trend_days: int = 14) -> DashboardStats:
     recent_inspections, _ = inspection_service.list_inspections(
         db, page=1, page_size=5, sort_by="inspect_time"
     )
+    recent_emergencies, _ = emergency_service.list_emergencies(
+        db, page=1, page_size=5, sort_by="discovered_at"
+    )
     return DashboardStats(
         overview=overview(db),
         issue_by_status=issue_by_status(db),
         issue_by_category=issue_by_category(db),
         issue_by_severity=issue_by_severity(db),
+        emergency_by_type=emergency_by_type(db),
         inspection_trend=inspection_trend(db, days=trend_days),
         districts=district_stats(db),
         top_restrooms=restroom_ranking(db),
         recent_issues=[issue_service.to_out(issue) for issue in recent_issues],
         recent_inspections=[inspection_service.to_out(item) for item in recent_inspections],
+        recent_emergencies=[emergency_service.to_out(item) for item in recent_emergencies],
     )

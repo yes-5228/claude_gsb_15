@@ -5,9 +5,9 @@ from datetime import datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.constants import OPEN_ISSUE_STATUSES
+from app.core.constants import OPEN_EMERGENCY_STATUSES, OPEN_ISSUE_STATUSES
 from app.core.exceptions import ConflictError, DomainError, NotFoundError
-from app.models import Inspection, Issue, Restroom
+from app.models import Emergency, Inspection, Issue, Restroom
 from app.schemas.restroom import RestroomCreate, RestroomDetail, RestroomOut, RestroomUpdate
 
 SORTABLE_FIELDS = {
@@ -107,10 +107,13 @@ def delete_restroom(db: Session, restroom_id: int, *, force: bool = False) -> No
     issue_count = db.scalar(
         select(func.count()).select_from(Issue).where(Issue.restroom_id == restroom_id)
     ) or 0
-    if (inspection_count or issue_count) and not force:
+    emergency_count = db.scalar(
+        select(func.count()).select_from(Emergency).where(Emergency.restroom_id == restroom_id)
+    ) or 0
+    if (inspection_count or issue_count or emergency_count) and not force:
         raise ConflictError(
-            f"该公厕已有 {inspection_count} 条巡查记录、{issue_count} 条问题记录，"
-            "确需删除请使用 force=true"
+            f"该公厕已有 {inspection_count} 条巡查记录、{issue_count} 条问题记录、"
+            f"{emergency_count} 条应急事件记录，确需删除请使用 force=true"
         )
     db.delete(restroom)
     db.commit()
@@ -138,6 +141,17 @@ def get_restroom_detail(db: Session, restroom_id: int) -> RestroomDetail:
     total_issue_count = db.scalar(
         select(func.count()).select_from(Issue).where(Issue.restroom_id == restroom_id)
     ) or 0
+    open_emergency_count = db.scalar(
+        select(func.count())
+        .select_from(Emergency)
+        .where(
+            Emergency.restroom_id == restroom_id,
+            Emergency.status.in_(OPEN_EMERGENCY_STATUSES),
+        )
+    ) or 0
+    total_emergency_count = db.scalar(
+        select(func.count()).select_from(Emergency).where(Emergency.restroom_id == restroom_id)
+    ) or 0
 
     base = RestroomOut.model_validate(restroom).model_dump()
     return RestroomDetail(
@@ -148,6 +162,8 @@ def get_restroom_detail(db: Session, restroom_id: int) -> RestroomDetail:
         avg_score=round(float(avg_score), 1) if avg_score is not None else None,
         open_issue_count=open_issue_count,
         total_issue_count=total_issue_count,
+        open_emergency_count=open_emergency_count,
+        total_emergency_count=total_emergency_count,
     )
 
 

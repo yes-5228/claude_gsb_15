@@ -43,7 +43,34 @@ export const STATUS_TONES = {
   已关闭: 'tag-neutral',
   正常: 'tag-success',
   发现问题: 'tag-danger',
+  待响应: 'tag-danger',
+  处置中: 'tag-warning',
+  已恢复: 'tag-success',
 };
+
+export const EMERGENCY_TYPE_TONES = {
+  停水停电: 'tag-info',
+  设施爆裂: 'tag-danger',
+  污损外溢: 'tag-warning',
+  其他: 'tag-neutral',
+};
+
+export function emergencyTypeTone(eventType) {
+  return EMERGENCY_TYPE_TONES[eventType] || 'tag-neutral';
+}
+
+/** 把分钟数格式化为易读时长，如 45分钟 / 1小时30分 / 2天3小时。 */
+export function formatMinutes(minutes) {
+  if (minutes === null || minutes === undefined || Number.isNaN(Number(minutes))) return '-';
+  const total = Math.round(Number(minutes));
+  if (total < 60) return `${total}分钟`;
+  const hours = Math.floor(total / 60);
+  const restMinutes = total % 60;
+  if (hours < 24) return restMinutes ? `${hours}小时${restMinutes}分` : `${hours}小时`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return restHours ? `${days}天${restHours}小时` : `${days}天`;
+}
 
 export const SEVERITY_TONES = {
   一般: 'tag-neutral',

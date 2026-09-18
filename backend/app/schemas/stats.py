@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, Field
 
+from app.schemas.emergency import EmergencyOut
 from app.schemas.inspection import InspectionOut
 from app.schemas.issue import IssueOut
 
@@ -24,6 +25,9 @@ class OverviewStats(BaseModel):
     issue_overdue: int = 0
     issue_done_this_month: int = 0
     rectification_rate: float = Field(default=0.0, description="整改完成率（百分比）")
+    emergency_total: int = 0
+    emergency_open: int = Field(default=0, description="待响应与处置中的应急事件数")
+    emergency_response_overdue: int = Field(default=0, description="当前响应超时的应急事件数")
 
 
 class TrendPoint(BaseModel):
@@ -64,8 +68,10 @@ class DashboardStats(BaseModel):
     issue_by_status: list[NameValue] = Field(default_factory=list)
     issue_by_category: list[CategoryStat] = Field(default_factory=list)
     issue_by_severity: list[NameValue] = Field(default_factory=list)
+    emergency_by_type: list[NameValue] = Field(default_factory=list)
     inspection_trend: list[TrendPoint] = Field(default_factory=list)
     districts: list[DistrictStat] = Field(default_factory=list)
     top_restrooms: list[RestroomRankItem] = Field(default_factory=list)
     recent_issues: list[IssueOut] = Field(default_factory=list)
     recent_inspections: list[InspectionOut] = Field(default_factory=list)
+    recent_emergencies: list[EmergencyOut] = Field(default_factory=list)
